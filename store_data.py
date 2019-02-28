@@ -87,7 +87,7 @@ class Session():
     def __init__(self):
 
         self.login_time = datetime.datetime.now()
-        self._conduit = DBInteraction(self)
+        self._conduit = DBInteraction(self, self.login_time)
 
     def __getattr__(self, attr):
         """Method that delegates any unknonw methods/attributes to the DBInteraction Object
