@@ -3,6 +3,27 @@ import pymysql
 import datetime
 
 
+class SQLError(Exception):
+    pass
+
+
+class Connection():
+
+    def __init__(self, name, sess):
+
+        self.name = name
+        self.sess = sess
+
+        self.db = pymysql.connect(host='localhost', user='root', password='Shadowguy!89', db=name)
+
+        self.cursor = self.db.cursor()
+
+    def close(self):
+
+        self.cursor.close()
+        self.db.close()
+
+
 class Session():
     """Session object that handles the flow of data in and out of the database. Note that the actual interaction with the database is delegated via a DBInteraction() object, and hence the Session acts as a sort of Proxy. This will later allow tight control over what attributes and methods are public and which are private, as opposed to simple inheritance
 
@@ -12,6 +33,8 @@ class Session():
         object that handles all contact with the SQL server
 
     """
+
+    _connections = []
 
     def __init__(self):
 
@@ -31,7 +54,7 @@ class Session():
         return getattr(self.conduit, attr)
 
     def __setattr__(self, attr, val):
-        """Any attributes that start with an underscore are set to the DBInteraction Conduit Object; all other attributes are set to the Session object. Note that his is doen via the super() method, which overrides the defined __setattr__ method and access the original __setattr__ method. Otherswise, one enters an infinite recursion regime
+        """Any attributes that start with an underscore are set to the DBInteraction Conduit Object; all other attributes are set to the Session object. Note that this is done via the super() method, which overrides the defined __setattr__ method and access the original __setattr__ method. Otherwise, one enters an infinite recursion regime
         """
 
         if attr.startswith('_'):
@@ -51,7 +74,7 @@ class Session():
             self.cursor = self.db.cursor()
 
         except Exception as err:
-            print(err)
+            raise SQLError(err)
 
         print('Session Created Succesfully')
 
@@ -68,6 +91,9 @@ class Session():
 
     def __exit__(self, exc_type, exc_val, tb):
         """Method used to close the connection properly"""
+
+        for connection in self._connections:
+            connection.close()
 
         try:
             self.db.commit()
@@ -94,7 +120,7 @@ class Session():
 
         """
 
-        league_name = league.replace(' ', '')
+        league_name = league.replace(' ', '').lower()
 
         if league_name not in self.tables:
             print('Adding League')
@@ -113,9 +139,13 @@ class Session():
 
             for team in (fixture.home_team, fixture.away_team):
 
-                print(team)
+                self.update_team(league_name, team.replace(' ', '').lower(), fixture)
 
-                self.update_team(league_name, team.replace(' ', ''), fixture)
+            for time, event in fixture.time_line.items():
+
+                team = fixture.home_team if event.home else fixture.away_team
+
+                self.update_player(league_name, team.replace(' ', ''), event)
 
 
 class DBInteraction():
@@ -135,6 +165,15 @@ class DBInteraction():
         self.timestamp = timestamp
 
     def add_league(self, league):
+        """Method used to add a new league to the database. Note that 3 new tables are created; one for the fixtures in the league, one for the league table itself and one for the
+        individual teams in the league
+
+        Parameters
+        ----------
+        league: str
+            name of league
+
+        """
 
         query1 = """
         CREATE TABLE IF NOT EXISTS {}Fixtures (
@@ -167,9 +206,24 @@ class DBInteraction():
         )
         """.format(league)
 
+        query3 = """
+        CREATE TABLE IF NOT EXISTS {}Players (
+
+        Name VARCHAR(50) NOT NULL PRIMARY KEY,
+        Team VARCHAR(50) NOT NULL,
+        Goals INT NOT NULL,
+        Penalties INT NOT NULL,
+        RedCards INT NOT NULL
+
+        )
+        """.format(league)
+
+        # the tables are then added to the database
+
         try:
             self.sess.cursor.execute(query1)
             self.sess.cursor.execute(query2)
+            self.sess.cursor.execute(query3)
             self.sess.db.commit()
 
         except Exception as err:
@@ -178,10 +232,7 @@ class DBInteraction():
     def add_fixture(self, league, fixture):
         """Method used to add a fixture to the current database
 
-        Returns
-        -------
-        success: boolean or Exception
-            returns True if operation was successful, returns an Exception otherwise
+
 
         """
 
@@ -196,18 +247,30 @@ class DBInteraction():
             print(err)
 
     def update_team(self, league, team, fixture):
-        """Method that updates the league table"""
+        """Method that updates the data for a team after a fixture has been played. Note that this consists of updating the overall league table and the teams individual team table. In order
+        to keep the database as consistent as possible, all team names are converted to lowercase and all spaces are removed so that the tables names are valid
+
+        Parameters
+        ----------
+        league: str
+            league name
+        team: str
+            team name
+        fixture Fixture Object
+            fixture object containing details of the fixture
+
+        """
 
         home, scored, conceded = True, 0, 0
 
         def map_results():
-            """Function that defines a list of results; note that the table is of form (team, games_played, GF, GA, GD, Won, Lost, Draw, Pts). A list of add-on values is defined based on the
-            fixture results. One can then simply do an operation like current_state = old_state + new_state to update the league table
+            """Function that defines a list of results; note that the league table where the data is stored is of form (team, games_played, GF, GA, GD, Won, Lost, Draw, Pts). A list of add-on values is defined based on the fixture results. One can then simply do an operation like current_stats = old_stats + fixture_stats to update the league table
+
             """
 
             nonlocal home, scored, conceded
 
-            if team == fixture.home_team:
+            if team == fixture.home_team.replace(' ', '').lower():
                 home, scored, conceded = True, int(fixture.home_score), int(fixture.away_score)
             else:
                 home, scored, conceded = False, int(fixture.away_score), int(fixture.home_score)
@@ -265,7 +328,7 @@ class DBInteraction():
 
         query1 = """
 
-        UPDATE {} SET Played = '{}', GF = '{}', GA = '{}', GD = '{}', Won = '{}', Lost = '{}', Draw = '{}', Pts = '{}' where {}.Team = '{}'
+        UPDATE {} SET Played = '{}', GF = '{}', GA = '{}', GD = '{}', Won = '{}', Lost = '{}', Draw = '{}', Pts = '{}' WHERE {}.Team = '{}'
         """.format(league, *new_state, league, team)
 
         # the individual team table is then updated
@@ -286,5 +349,74 @@ class DBInteraction():
 
         self.sess.db.commit()
 
-    def update_player(self):
-        pass
+    def update_player(self, league, team, event):
+        """Method used to update the statistics of a player
+
+        Parameters
+        ----------
+        league: str
+            league name
+        team: str
+            team name
+        event: Event object
+            event object containing details of the event
+
+        """
+
+        name = event.player.replace('\'', '')
+
+        # the players current stats are retrieved from the database; note that if the palyer has no entry, an enrty is created
+
+        try:
+            self.sess.cursor.execute(
+                'SELECT * FROM {0}Players WHERE {0}Players.name = "{1}"'.format(league, name))
+            *args, goals, pens, reds = self.sess.cursor.fetchall()[0]
+
+        except:
+            print('Adding Player', name, team)
+            query = """
+
+            INSERT INTO {}Players (Name, Team, Goals, Penalties, RedCards) VALUES ('{}', '{}', '0', '0', '0')
+            """.format(league, name, team)
+
+            self.sess.cursor.execute(query)
+            self.sess.db.commit()
+
+            return self.update_player(league, team, event)
+
+        # the type of event is then determined
+
+        if event.type == 'goal':
+            goals += 1
+        elif event.type == 'penalty':
+            pens += 1
+        else:
+            reds += 1
+
+        # the players statstics are updated
+
+        query = """
+        UPDATE {}Players SET Goals = '{}', Penalties = '{}', RedCards = '{}'
+        """.format(league, goals, pens, reds)
+
+        self.sess.db.commit()
+
+    def clear_system(self):
+        """Method Used to clear the Database of all Data"""
+
+        self.sess.cursor.execute('SHOW TABLES')
+        tables = self.sess.cursor.fetchall()
+
+        for table in tables:
+            self.sess.cursor.execute('DROP TABLE {};'.format(table[0]))
+
+        self.sess.db.commit()
+
+        print('System Cleared')
+
+
+if __name__ == '__main__':
+
+    with Session() as sess:
+
+        sess.clear_system()
