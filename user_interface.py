@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk
 import sys
 import datetime
+from get_data import Session
 
 LARGE_FONT = ('Comic Sans MS', 20)
 SMALL_FONT = ('Verdana', 8)
@@ -13,9 +14,14 @@ class Application(tk.Tk):
 
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, session, *args, **kwargs):
 
         super().__init__(*args, **kwargs)
+
+        try:
+            self.sess = session
+        except Exception as err:
+            raise AttributeError('Application Requires a Session Object with SQL Interpreter')
 
         # the container frame is defined and packed into the main window; note that all frame objects require some sort of parent, and the container acts as said parent.
 
@@ -83,7 +89,9 @@ class DateWidget(tk.Frame):
 
     def __init__(self, parent, controller):
 
-        super().__init__(parent, relief=tk.RAISED, borderwidth=3)
+        self.parent = parent
+
+        super().__init__(self.parent, relief=tk.RAISED, borderwidth=3)
 
         # the widget consists of a single row
 
@@ -130,10 +138,22 @@ class DateWidget(tk.Frame):
                 self.buttons.append(tk.Button(self, text='>', command=lambda: self.scroll(1)))
                 self.buttons[i].grid(row=0, column=i, sticky='nsew')
             else:
-                date = self.convert_date(date)
+                date_str = self.convert_date(date)
                 self.buttons.append(ttk.Button(
-                    self, text='{}\n{} {}'.format(date[0],date[1],date[2]), style='my.TButton'))
+                    self, text='{}\n{} {}'.format(date_str[0],date_str[1],date_str[2]), style='my.TButton', command=lambda date=date: self.display_date(date)))
                 self.buttons[i].grid(row=0, column=i, sticky='nsew')
+
+    def display_date(self, date):
+        """Method that calls the LeagueFixtureWidget's display_date method
+
+        Paremeters
+        ----------
+        date: str
+            string of date
+
+        """
+
+        self.parent.fixtures.display_date(date)
 
 
     def convert_date(self, date):
@@ -198,7 +218,6 @@ class DateWidget(tk.Frame):
 
 
 
-
 class LeagueBarWidget(tk.Frame):
     """Widget that displays buttons with various leagues as button labels; clicking the button will display the data for that particular league
 
@@ -213,7 +232,9 @@ class LeagueBarWidget(tk.Frame):
 
     def __init__(self, parent, controller):
 
-        super().__init__(parent)
+        self.parent = parent
+
+        super().__init__(self.parent)
 
         # a style is first defined for the buttons
 
@@ -229,8 +250,13 @@ class LeagueBarWidget(tk.Frame):
         for i, league in enumerate(leagues):
             self.grid_columnconfigure(i, weight=1)
 
-            buttons['league'] = ttk.Button(self, text=league, style='my.TButton')
+            buttons['league'] = ttk.Button(self, text=league, style='my.TButton', command=lambda league=league: self.display_league(league))
             buttons['league'].grid(column=i, row=0, sticky='nsew')
+
+    def display_league(self, league):
+
+        self.parent.table.display_league(league)
+        self.parent.fixtures.display_league(league)
 
 
 
@@ -259,15 +285,15 @@ class MainPage(tk.Frame):
         datebar = DateWidget(self, controller)
         datebar.grid(row=1, sticky='nsew', columnspan=2)
 
-        # a league fixture widget that displays the league fixtures is then added
+        # a league fixture widget that displays the league fixtures is then added. Note that these are added as instance attributes since they are changed by the DateWidget and LeagueBarWidget
 
-        fixtures = LeagueFixtureWidget(self, controller)
-        fixtures.grid(row=2, column=0, sticky='nsew', pady=5, padx=5)
+        self.fixtures = LeagueFixtureWidget(self, controller)
+        self.fixtures.grid(row=2, column=0, sticky='nsew', pady=5, padx=5)
 
         # and a league table widget that
 
-        table = LeagueTableWidget(self, controller)
-        table.grid(row=2, column=1, sticky='nsew', pady=5, padx=5)
+        self.table = LeagueTableWidget(self, controller)
+        self.table.grid(row=2, column=1, sticky='nsew', pady=5, padx=5)
 
 
 class LeagueFixtureWidget(tk.Frame):
@@ -276,6 +302,42 @@ class LeagueFixtureWidget(tk.Frame):
 
         super().__init__(parent, relief=tk.RAISED, borderwidth=1)
 
+        # the fixture section grid is then configured
+
+        self.grid_columnconfigure(0, weight=1)
+
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=20)
+
+        # a frame for the title is configured
+
+        title_frame = tk.Frame(self, relief=tk.RAISED, borderwidth=2)
+        title_frame.grid(row=0, column=0, sticky='nsew')
+
+        title_frame.grid_rowconfigure(0, weight=1)
+        title_frame.grid_columnconfigure(0, weight=3)
+        title_frame.grid_columnconfigure(1, weight=1)
+
+        # the name and date are then inserted into the title frameb
+
+        self.title = ttk.Label(title_frame, text='League Fixtures', font=('Verdana', 10))
+        self.title.grid(column=0, row=0)
+
+        self.date = ttk.Label(title_frame, text='07-03-2019', font=('Verdana', 10))
+        self.date.grid(column=1, row=0)
+
+        # the body frame, which contains the majority of the context, is then defined. The Fixture Data is defined here
+
+        body_frame = tk.Frame(self, relief=tk.RAISED, borderwidth=2)
+        body_frame.grid(row=1, column=0, sticky='nsew')
+
+    def display_date(self, date):
+        print('Displaying data for', date)
+        self.date['text'] = date
+
+    def display_league(self, league):
+        print('Displaying Data for', league)
+        self.title['text'] = league
 
 
 class LeagueTableWidget(tk.Frame):
@@ -285,11 +347,17 @@ class LeagueTableWidget(tk.Frame):
         super().__init__(parent, relief=tk.RAISED, borderwidth=1)
 
 
+    def display_league(self, league):
+        """Method called when the league is changed in the LeagueBarWidget"""
+
+        print('Displaying Data for', league)
+
+
 
 
 def main():
 
-    app = Application()
+    app = Application(session=Session())
     app.geometry('800x600')
     app.mainloop()
 
